@@ -18,7 +18,7 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
 #if DEBUG
         if (!Debugger.IsAttached)
         {
-            Debugger.Launch();
+            //Debugger.Launch();
         }
 #endif
         context.RegisterForSyntaxNotifications(() => new ObjectFactorySyntaxReceiver());
@@ -80,21 +80,17 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
             var interceptorMethodReturnsObject = interceptorMethodSymbols.FirstOrDefault(m => m.ReturnType.SpecialType == SpecialType.System_Object);
 
             // Generate the CreateXXX(...) methods
-            foreach (var constructor in receiver.CommandTypeConstructors)
+            foreach (ConstructorDeclarationSyntax constructor in receiver.CommandTypeConstructors)
             {
-                //factoryClass.BaseTypes.
-                //var type = semanticModel.GetTypeInfo().Type;
-                //var baseTypes = factoryClass.BaseTypes.Select(t => semanticModel.GetTypeInfo(t)).ToList();
+                //List<TypeInfo> baseTypes = factoryClass.BaseTypes.Select(t => semanticModel.GetTypeInfo(t)).ToList();
+                IMethodSymbol constructorSymbol = semanticModel.GetDeclaredSymbol(constructor);
+                INamedTypeSymbol containingTypeSymbol = constructorSymbol.ContainingType;
 
-                //// Check if the constructor is from a type that has a RelayFactoryOf attribute
-                //if (constructor.Parent is not ClassDeclarationSyntax classDeclaration)
-                //{
-                //    continue;
-                //}
-
-                var constructorSymbol = semanticModel.GetDeclaredSymbol(constructor);
-
-                var containingTypeSymbol = constructorSymbol.ContainingType;
+                var inherits = InheritsFromBaseType(containingTypeSymbol, factoryClass.BaseTypes, semanticModel);
+                if (!inherits)
+                {
+                    continue;
+                }
 
                 foreach (var relayFactoryAttribute in relayFactoryAttributes)
                 {
@@ -155,10 +151,86 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
         }
     }
 
+    public bool InheritsFromBaseType(INamedTypeSymbol containingTypeSymbol, IEnumerable<TypeSyntax> baseTypes, SemanticModel semanticModel)
+    {
+        foreach (var baseTypeSyntax in baseTypes)
+        {
+            var baseType = semanticModel.GetTypeInfo(baseTypeSyntax).Type as INamedTypeSymbol;
+            if (baseType != null && containingTypeSymbol.InheritsFrom(baseType))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+
+    public static bool ConstructorInheritsFromBaseType(ConstructorDeclarationSyntax constructor, ClassDeclarationSyntax factoryClass, SemanticModel semanticModel)
+    {
+        var baseTypes = factoryClass.BaseList.Types.Select(t => semanticModel.GetTypeInfo(t.Type)).ToList();
+        var constructorSymbol = semanticModel.GetDeclaredSymbol(constructor);
+        var containingTypeSymbol = constructorSymbol.ContainingType;
+
+        foreach (var baseType in baseTypes)
+        {
+            var currentType = containingTypeSymbol.BaseType;
+
+            while (currentType != null)
+            {
+                if (SymbolEqualityComparer.Default.Equals(currentType, baseType.Type))
+                {
+                    return true;
+                }
+
+                currentType = currentType.BaseType;
+            }
+        }
+
+        return false;
+    }
+
+
     private static bool HasFromServicesAttribute(IParameterSymbol parameterSymbol)
     {
         return parameterSymbol.GetAttributes().Any(attr => attr.AttributeClass.Name.StartsWith("FromServices"));
     }
+}
+
+public static class Extensions
+{
+    //public static bool InheritsFrom(this INamedTypeSymbol type, INamedTypeSymbol baseType)
+    //{
+    //    if (type == null)
+    //    {
+    //        return false;
+    //    }
+    //    if (type.Equals(baseType))
+    //    {
+    //        return true;
+    //    }
+    //    return InheritsFrom(type.BaseType, baseType);
+    //}
+
+    public static bool InheritsFrom(this INamedTypeSymbol derivedType, INamedTypeSymbol baseType)
+    {
+        if (derivedType == null || baseType == null)
+        {
+            return false;
+        }
+
+        if (derivedType.BaseType == null)
+        {
+            return false;
+        }
+
+        if (derivedType.BaseType.Equals(baseType))
+        {
+            return true;
+        }
+
+        return derivedType.BaseType.InheritsFrom(baseType);
+    }
+
 }
 
 public class ObjectFactorySyntaxReceiver : ISyntaxReceiver
@@ -218,12 +290,14 @@ public class ObjectFactorySyntaxReceiver : ISyntaxReceiver
         var factoryInfo = new FactoryInfo();
         factoryInfo.Declaration = classDeclaration;
 
-        //FactoryClasses.Add(classDeclaration);
+
+
+        FactoryClasses.Add(factoryInfo);
         foreach (var factoryAttribute in factoryAttributes)
         {
             if (factoryAttribute.ArgumentList.Arguments.FirstOrDefault().Expression is TypeOfExpressionSyntax typeOfExpression)
             {
-                //factoryInfo.BaseTypes.Add(typeOfExpression.Type);
+                factoryInfo.BaseTypes.Add(typeOfExpression.Type);
             }
 
             //var typeName = factoryAttribute.ArgumentList.Arguments.FirstOrDefault()?.ToString().Trim(' ', '"');

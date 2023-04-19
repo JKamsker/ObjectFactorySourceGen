@@ -8,19 +8,22 @@ internal class Program
     {
         var sc = new ServiceCollection()
            .AddSingleton<MyService>()
-           //.AddTransient(sp => sp.GetService<MyFactory>().CreateCommandType("", "", ""))
+           .AddSingleton<MyFactory>()
+           .AddTransient(sp => sp.GetService<MyFactory>().WithName("Hallo").CreateCommandType("", "", ""))
            //.AddTransient(x =>
            //{
-           //    ActivatorUtilities.CreateInstance<CommandType1>(x, "", "", "");
+           //    //ActivatorUtilities.CreateInstance<CommandType>(x, "", "", "");
            //})
            ;
 
         var sp = sc.BuildServiceProvider();
 
+        var ct = sp.GetService<CommandType>();
+
         var factory = new MyFactory(sp);
-        //factory.CreateCommandType("", 1);
+        //factory.
 
-
+        //var commandType = factory.CreateCommandType("", 1);
     }
 }
 
@@ -28,10 +31,24 @@ internal class Program
 public partial class MyFactory
 {
     private readonly IServiceProvider _provider;
+    private string _name;
 
     public MyFactory(IServiceProvider provider)
     {
         _provider = provider;
+    }
+
+    public MyFactory WithName(string name)
+    {
+        _name = name;
+        return this;
+    }
+
+    private CommandType Intercept(CommandType commandType1)
+    {
+        commandType1.Name = _name;
+        //commandType1.MyProperty = "Hello";
+        return commandType1;
     }
 }
 
@@ -41,6 +58,8 @@ public class CommandTypeBase
 
 public class CommandType : CommandTypeBase
 {
+    public string Name { get; internal set; }
+
     /// <summary>
     /// This is CommandType2
     /// </summary>
@@ -55,7 +74,21 @@ public class CommandType : CommandTypeBase
     }
 }
 
+public class ShouldNotBeGenerated : NoBase
+{
+    public ShouldNotBeGenerated(string myParameter, string myParameter1, string myParameter2, [FromServices] MyService context, [FromServices] MyService context1)
+    {
+        // do something
+    }
+}
+
+
+public class NoBase
+{
+
+}
+
+
 public class MyService
 {
 }
-
