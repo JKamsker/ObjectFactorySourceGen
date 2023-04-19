@@ -1,10 +1,12 @@
-﻿using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using Microsoft.CodeAnalysis;
+﻿using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
+
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Text;
 
 namespace ObjectFactorySourceGen;
 
@@ -13,6 +15,12 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
 {
     public void Initialize(GeneratorInitializationContext context)
     {
+#if DEBUG
+        if (!Debugger.IsAttached)
+        {
+            Debugger.Launch();
+        }
+#endif
         context.RegisterForSyntaxNotifications(() => new ObjectFactorySyntaxReceiver());
     }
 
@@ -25,8 +33,8 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
 
         foreach (var factoryClass in receiver.FactoryClasses)
         {
-            var semanticModel = context.Compilation.GetSemanticModel(factoryClass.SyntaxTree);
-            var factorySymbol = semanticModel.GetDeclaredSymbol(factoryClass);
+            var semanticModel = context.Compilation.GetSemanticModel(factoryClass.Declaration.SyntaxTree);
+            var factorySymbol = semanticModel.GetDeclaredSymbol(factoryClass.Declaration);
             var relayFactoryAttributes = factorySymbol.GetAttributes().Where(attr => attr.AttributeClass.Name.StartsWith("RelayFactoryOf"));
 
             var serviceProviderSymbol = context.Compilation.GetTypeByMetadataName("System.IServiceProvider");
@@ -74,7 +82,18 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
             // Generate the CreateXXX(...) methods
             foreach (var constructor in receiver.CommandTypeConstructors)
             {
+                //factoryClass.BaseTypes.
+                //var type = semanticModel.GetTypeInfo().Type;
+                //var baseTypes = factoryClass.BaseTypes.Select(t => semanticModel.GetTypeInfo(t)).ToList();
+
+                //// Check if the constructor is from a type that has a RelayFactoryOf attribute
+                //if (constructor.Parent is not ClassDeclarationSyntax classDeclaration)
+                //{
+                //    continue;
+                //}
+
                 var constructorSymbol = semanticModel.GetDeclaredSymbol(constructor);
+
                 var containingTypeSymbol = constructorSymbol.ContainingType;
 
                 foreach (var relayFactoryAttribute in relayFactoryAttributes)
@@ -96,7 +115,6 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
 
                         //generatedCode.AppendLine($"return new {returnType}({string.Join(", ", constructorSymbol.Parameters.Select(p => p.Name))});");
                         generatedCode.AppendLine($"var result = new {returnType}({string.Join(", ", constructorSymbol.Parameters.Select(p => p.Name))});");
-
 
                         var interceptorMethod = interceptorMethodSymbols.FirstOrDefault(m => m.ReturnType.Equals(containingTypeSymbol));
                         //var interceptorMethod = interceptorMethodSymbols.FirstOrDefault(m => SymbolEqualityComparer.Default.Equals((ISymbol)m.ReturnType, (ISymbol)commandTypeBase));
@@ -136,6 +154,7 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
             context.AddSource(fileName, SourceText.From(generatedCode.ToString(), Encoding.UTF8));
         }
     }
+
     private static bool HasFromServicesAttribute(IParameterSymbol parameterSymbol)
     {
         return parameterSymbol.GetAttributes().Any(attr => attr.AttributeClass.Name.StartsWith("FromServices"));
@@ -144,15 +163,36 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
 
 public class ObjectFactorySyntaxReceiver : ISyntaxReceiver
 {
-    public List<ClassDeclarationSyntax> FactoryClasses { get; } = new();
+    internal List<FactoryInfo> FactoryClasses { get; } = new();
     public List<ConstructorDeclarationSyntax> CommandTypeConstructors { get; } = new();
+
+    //public List<Type> TypeList { get; } = new();
+
+    //public void OnVisitSyntaxNode(SyntaxNode syntaxNode)
+    //{
+    //    if (syntaxNode is ClassDeclarationSyntax classDeclaration &&
+    //        classDeclaration.Modifiers.Any(m => m.Text == "partial") &&
+    //        classDeclaration.AttributeLists.Any(a => a.Attributes.Any(attr => attr.Name.ToString().StartsWith("RelayFactoryOf"))))
+    //    {
+    //        FactoryClasses.Add(classDeclaration);
+    //    }
+
+    //    if (syntaxNode is ConstructorDeclarationSyntax constructorDeclaration &&
+    //        constructorDeclaration.Parent is ClassDeclarationSyntax parentClass &&
+    //        parentClass.BaseList != null)
+    //    {
+    //        CommandTypeConstructors.Add(constructorDeclaration);
+    //    }
+    //}
+
     public void OnVisitSyntaxNode(SyntaxNode syntaxNode)
     {
-        if (syntaxNode is ClassDeclarationSyntax classDeclaration &&
-            classDeclaration.Modifiers.Any(m => m.Text == "partial") &&
-            classDeclaration.AttributeLists.Any(a => a.Attributes.Any(attr => attr.Name.ToString().StartsWith("RelayFactoryOf"))))
+        if (syntaxNode is ClassDeclarationSyntax classDeclaration
+            && classDeclaration.Modifiers.Any(m => m.Text == "partial")
+            //&& classDeclaration.AttributeLists.Any(a => a.Attributes.Any(attr => attr.Name.ToString().StartsWith("RelayFactoryOf")))
+            )
         {
-            FactoryClasses.Add(classDeclaration);
+            VisitPartialDeclarations(classDeclaration);
         }
 
         if (syntaxNode is ConstructorDeclarationSyntax constructorDeclaration &&
@@ -162,4 +202,43 @@ public class ObjectFactorySyntaxReceiver : ISyntaxReceiver
             CommandTypeConstructors.Add(constructorDeclaration);
         }
     }
+
+    private void VisitPartialDeclarations(ClassDeclarationSyntax classDeclaration)
+    {
+        var factoryAttributes = classDeclaration.AttributeLists
+                        .SelectMany(al => al.Attributes)
+                        .Where(attr => attr.Name.ToString().StartsWith("RelayFactoryOf"))
+                        .ToList();
+
+        if (factoryAttributes.Count < 1)
+        {
+            return;
+        }
+
+        var factoryInfo = new FactoryInfo();
+        factoryInfo.Declaration = classDeclaration;
+
+        //FactoryClasses.Add(classDeclaration);
+        foreach (var factoryAttribute in factoryAttributes)
+        {
+            if (factoryAttribute.ArgumentList.Arguments.FirstOrDefault().Expression is TypeOfExpressionSyntax typeOfExpression)
+            {
+                //factoryInfo.BaseTypes.Add(typeOfExpression.Type);
+            }
+
+            //var typeName = factoryAttribute.ArgumentList.Arguments.FirstOrDefault()?.ToString().Trim(' ', '"');
+            //var type = Type.GetType(typeName);
+            //if (type != null)
+            //{
+            //    //TypeList.Add(type);
+            //    factoryInfo.BaseTypes.Add(type);
+            //}
+        }
+    }
+}
+
+internal class FactoryInfo
+{
+    public ClassDeclarationSyntax Declaration { get; set; }
+    public List<TypeSyntax> BaseTypes { get; set; } = new();
 }
