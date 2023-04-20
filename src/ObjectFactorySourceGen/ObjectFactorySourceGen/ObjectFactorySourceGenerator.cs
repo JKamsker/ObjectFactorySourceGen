@@ -12,7 +12,7 @@ using System.Text;
 namespace ObjectFactorySourceGen;
 
 [Generator]
-public class ObjectFactorySourceGenerator : ISourceGenerator
+public partial class ObjectFactorySourceGenerator : ISourceGenerator
 {
     private readonly Dictionary<SyntaxTree, SemanticModel> _semanticModelCache = new Dictionary<SyntaxTree, SemanticModel>();
 
@@ -21,7 +21,7 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
 #if DEBUG
         if (!Debugger.IsAttached)
         {
-            //Debugger.Launch();
+            Debugger.Launch();
         }
 #endif
         context.RegisterForSyntaxNotifications(() => new ObjectFactorySyntaxReceiver());
@@ -59,121 +59,178 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
     {
         foreach (var factoryClass in receiver.FactoryClasses)
         {
-            // var semanticModel = context.Compilation.GetSemanticModel(factoryClass.Declaration.SyntaxTree);
             var semanticModel = GetSemanticModel(context.Compilation, factoryClass.Declaration.SyntaxTree);
             var factorySymbol = semanticModel.GetDeclaredSymbol(factoryClass.Declaration);
-            var relayFactoryAttributes = factorySymbol.GetAttributes().Where(attr => attr.AttributeClass.Name.StartsWith("RelayFactoryOf"));
 
-            var serviceProviderSymbol = context.Compilation.GetTypeByMetadataName("System.IServiceProvider");
-            var serviceProviderFieldOrProperty = factorySymbol.GetMembers().FirstOrDefault(m => m.Kind == SymbolKind.Field || m.Kind == SymbolKind.Property && (m as ITypeSymbol).Equals(serviceProviderSymbol));
-
+            var serviceProviderFieldOrProperty = FindServiceProviderFieldOrProperty(context, factorySymbol);
             if (serviceProviderFieldOrProperty == null)
             {
-                var diagnostic = Diagnostic.Create(
-                    new DiagnosticDescriptor(
-                        "ObjectFactorySourceGenerator",
-                        "No IServiceProvider field or property found",
-                        "The {0} class must contain an IServiceProvider field or property.",
-                        "ObjectFactorySourceGenerator",
-                        DiagnosticSeverity.Error,
-                        isEnabledByDefault: true),
-                    factorySymbol.Locations[0],
-                    factorySymbol.Name);
-
-                context.ReportDiagnostic(diagnostic);
+                ReportNoServiceProviderDiagnostic(context, factorySymbol);
                 continue;
             }
 
             var serviceProviderName = serviceProviderFieldOrProperty.Name;
-            var generatedCode = new StringBuilder();
-            generatedCode.AppendLine("using System;");
-            generatedCode.AppendLine("using System.Collections.Generic;");
-            generatedCode.AppendLine("using Microsoft.Extensions.DependencyInjection;");
-            generatedCode.AppendLine();
+            var generatedCode = GenerateFactoryCode(context, receiver, factoryClass, factorySymbol, serviceProviderName);
+            var fileName = $"{factorySymbol.Name}_GeneratedFactoryMethods.generated.cs";
 
-            var namespaceSymbol = factorySymbol.ContainingNamespace;
-            generatedCode.AppendLine($"namespace {namespaceSymbol}");
-            generatedCode.AppendLine("{");
+            context.AddSource(fileName, SourceText.From(generatedCode, Encoding.UTF8));
+        }
+    }
 
-            var factoryClassName = factorySymbol.Name;
-            generatedCode.AppendLine($"partial class {factoryClassName}");
-            generatedCode.AppendLine("{");
+    private IFieldSymbol FindServiceProviderFieldOrProperty(GeneratorExecutionContext context, INamedTypeSymbol factorySymbol)
+    {
+        var serviceProviderSymbol = context.Compilation.GetTypeByMetadataName("System.IServiceProvider");
+        return factorySymbol.GetMembers()
+            .FirstOrDefault(m => m.Kind == SymbolKind.Field || m.Kind == SymbolKind.Property && (m as ITypeSymbol).Equals(serviceProviderSymbol)) as IFieldSymbol;
+    }
 
-            var interceptorMethodSymbols = factorySymbol.GetMembers()
-                .OfType<IMethodSymbol>()
-                .Where(m => m.Name == "Intercept" && m.IsStatic == false && m.DeclaredAccessibility == Accessibility.Private)
-                .ToList();
+    private void ReportNoServiceProviderDiagnostic(GeneratorExecutionContext context, INamedTypeSymbol factorySymbol)
+    {
+        var diagnostic = Diagnostic.Create(
+            new DiagnosticDescriptor(
+                "ObjectFactorySourceGenerator",
+                "No IServiceProvider field or property found",
+                "The {0} class must contain an IServiceProvider field or property.",
+                "ObjectFactorySourceGenerator",
+                DiagnosticSeverity.Error,
+                isEnabledByDefault: true),
+            factorySymbol.Locations[0],
+            factorySymbol.Name);
 
-            var interceptorMethodReturnsVoid = interceptorMethodSymbols.FirstOrDefault(m => m.ReturnType.SpecialType == SpecialType.System_Void);
-            var interceptorMethodReturnsObject = interceptorMethodSymbols.FirstOrDefault(m => m.ReturnType.SpecialType == SpecialType.System_Object);
+        context.ReportDiagnostic(diagnostic);
+    }
 
-            // Generate the CreateXXX(...) methods
-            foreach (ConstructorDeclarationSyntax constructor in receiver.CommandTypeConstructors)
+    private string GenerateFactoryCode(GeneratorExecutionContext context, ObjectFactorySyntaxReceiver receiver, FactoryInfo factoryClass, INamedTypeSymbol factorySymbol, string serviceProviderName)
+    {
+        var generatedCode = new StringBuilder();
+
+        AppendUsingDirectives(generatedCode);
+        AppendNamespaceDeclaration(generatedCode, factorySymbol.ContainingNamespace);
+
+        AppendPartialClassDeclaration(generatedCode, factorySymbol.Name);
+        AppendCreateMethods(context, receiver, factoryClass, factorySymbol, serviceProviderName, generatedCode);
+
+        generatedCode.AppendLine("}");
+        generatedCode.AppendLine("}");
+
+        return generatedCode.ToString();
+    }
+
+    private void AppendUsingDirectives(StringBuilder generatedCode)
+    {
+        generatedCode.AppendLine("using System;");
+        generatedCode.AppendLine("using System.Collections.Generic;");
+        generatedCode.AppendLine("using Microsoft.Extensions.DependencyInjection;");
+        generatedCode.AppendLine();
+    }
+
+    private void AppendNamespaceDeclaration(StringBuilder generatedCode, INamespaceSymbol namespaceSymbol)
+    {
+        generatedCode.AppendLine($"namespace {namespaceSymbol}");
+        generatedCode.AppendLine("{");
+    }
+
+    private void AppendPartialClassDeclaration(StringBuilder generatedCode, string factoryClassName)
+    {
+        generatedCode.AppendLine($"partial class {factoryClassName}");
+        generatedCode.AppendLine("{");
+    }
+
+    private void AppendCreateMethods(GeneratorExecutionContext context, ObjectFactorySyntaxReceiver receiver, FactoryInfo factoryClass, INamedTypeSymbol factorySymbol, string serviceProviderName, StringBuilder generatedCode)
+    {
+        var interceptorMethodSymbols = GetInterceptorMethods(factorySymbol);
+
+        foreach (ConstructorDeclarationSyntax constructor in receiver.CommandTypeConstructors)
+        {
+            var constructorModel = GetSemanticModel(context.Compilation, constructor.SyntaxTree);
+            IMethodSymbol constructorSymbol = constructorModel.GetDeclaredSymbol(constructor);
+            INamedTypeSymbol containingTypeSymbol = constructorSymbol.ContainingType;
+
+            //var inherits = Helper.InheritsFromBaseType(containingTypeSymbol, factoryClass.BaseTypes, constructorModel);
+            var inherits = InheritsFromBaseType(containingTypeSymbol, factoryClass.BaseTypes, context.Compilation);
+            if (!inherits)
             {
-                var constructorModel = GetSemanticModel(context.Compilation, constructor.SyntaxTree);
-                IMethodSymbol constructorSymbol = constructorModel.GetDeclaredSymbol(constructor);
-                INamedTypeSymbol containingTypeSymbol = constructorSymbol.ContainingType;
-
-                var inherits = Helper.InheritsFromBaseType(containingTypeSymbol, factoryClass.BaseTypes, semanticModel);
-                if (!inherits)
-                {
-                    continue;
-                }
-
-                foreach (var relayFactoryAttribute in relayFactoryAttributes)
-                {
-                    var commandTypeBase = relayFactoryAttribute.ConstructorArguments[0].Value;
-
-                    if (commandTypeBase.Equals(containingTypeSymbol.BaseType))
-                    {
-                        var returnType = containingTypeSymbol.Name;
-                        var parameters = constructorSymbol.Parameters.Where(p => !Helper.HasFromServicesAttribute(p));
-
-                        generatedCode.AppendLine($"public {returnType} Create{returnType}({string.Join(", ", parameters.Select(p => $"{p.Type} {p.Name}"))})");
-                        generatedCode.AppendLine("{");
-
-                        GenerateParameterResolution(serviceProviderName, generatedCode, constructorSymbol.Parameters);
-
-                        generatedCode.AppendLine($"var result = new {returnType}({string.Join(", ", constructorSymbol.Parameters.Select(p => p.Name))});");
-
-                        var interceptorMethod = interceptorMethodSymbols.FirstOrDefault(m => m.ReturnType.Equals(containingTypeSymbol));
-                        if (interceptorMethod != null)
-                        {
-                            var interceptCall = $"Intercept(result)";
-                            if (!interceptorMethod.ReturnType.SpecialType.Equals(SpecialType.System_Void))
-                            {
-                                generatedCode.AppendLine($"result = {interceptCall};");
-                            }
-                            else
-                            {
-                                generatedCode.AppendLine(interceptCall + ";");
-                            }
-                        }
-
-                        if (interceptorMethodReturnsObject != null)
-                        {
-                            generatedCode.AppendLine($"result = Intercept(result as Object) as {returnType};");
-                        }
-                        else if (interceptorMethodReturnsVoid != null)
-                        {
-                            generatedCode.AppendLine($"Intercept(result);");
-                        }
-
-                        generatedCode.AppendLine($"return result;");
-                        generatedCode.AppendLine("}");
-                        generatedCode.AppendLine();
-                    }
-                }
+                continue;
             }
 
-            generatedCode.AppendLine("}");
-            generatedCode.AppendLine("}");
-
-            var fileName = $"{factoryClassName}_GeneratedFactoryMethods.generated.cs";
-            var stringCode = generatedCode.ToString();
-
-            context.AddSource(fileName, SourceText.From(stringCode, Encoding.UTF8));
+            foreach (var relayFactoryAttribute in GetRelayFactoryAttributes(factorySymbol))
+            {
+                var commandTypeBase = relayFactoryAttribute.ConstructorArguments[0].Value;
+                if (commandTypeBase.Equals(containingTypeSymbol.BaseType))
+                {
+                    AppendCreateMethod(generatedCode, containingTypeSymbol, constructorSymbol, serviceProviderName, interceptorMethodSymbols);
+                }
+            }
         }
+    }
+
+    public bool InheritsFromBaseType(INamedTypeSymbol containingTypeSymbol, IEnumerable<TypeSyntax> baseTypes, Compilation compilation)
+    {
+        foreach (var baseTypeSyntax in baseTypes)
+        {
+            var semanticModel = GetSemanticModel(compilation, baseTypeSyntax.SyntaxTree);
+            var baseType = semanticModel.GetTypeInfo(baseTypeSyntax).Type as INamedTypeSymbol;
+            if (baseType != null && containingTypeSymbol.InheritsFrom(baseType))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private IEnumerable<AttributeData> GetRelayFactoryAttributes(INamedTypeSymbol factorySymbol)
+    {
+        return factorySymbol.GetAttributes().Where(attr => attr.AttributeClass.Name.StartsWith("RelayFactoryOf"));
+    }
+
+    private List<IMethodSymbol> GetInterceptorMethods(INamedTypeSymbol factorySymbol)
+    {
+        return factorySymbol.GetMembers()
+        .OfType<IMethodSymbol>()
+        .Where(m => m.Name == "Intercept" && m.IsStatic == false && m.DeclaredAccessibility == Accessibility.Private)
+        .ToList();
+    }
+
+    private void AppendCreateMethod(StringBuilder generatedCode, INamedTypeSymbol containingTypeSymbol, IMethodSymbol constructorSymbol, string serviceProviderName, List<IMethodSymbol> interceptorMethodSymbols)
+    {
+        var returnType = containingTypeSymbol.Name;
+        var parameters = constructorSymbol.Parameters.Where(p => !Helper.HasFromServicesAttribute(p));
+        generatedCode.AppendLine($"public {returnType} Create{returnType}({string.Join(", ", parameters.Select(p => $"{p.Type} {p.Name}"))})");
+        generatedCode.AppendLine("{");
+
+        GenerateParameterResolution(serviceProviderName, generatedCode, constructorSymbol.Parameters);
+
+        generatedCode.AppendLine($"var result = new {returnType}({string.Join(", ", constructorSymbol.Parameters.Select(p => p.Name))});");
+
+        var interceptorMethod = interceptorMethodSymbols.FirstOrDefault(m => m.ReturnType.Equals(containingTypeSymbol));
+        if (interceptorMethod != null)
+        {
+            var interceptCall = $"Intercept(result)";
+            if (!interceptorMethod.ReturnType.SpecialType.Equals(SpecialType.System_Void))
+            {
+                generatedCode.AppendLine($"result = {interceptCall};");
+            }
+            else
+            {
+                generatedCode.AppendLine(interceptCall + ";");
+            }
+        }
+
+        var interceptorMethodReturnsObject = interceptorMethodSymbols.FirstOrDefault(m => m.ReturnType.SpecialType == SpecialType.System_Object);
+        var interceptorMethodReturnsVoid = interceptorMethodSymbols.FirstOrDefault(m => m.ReturnType.SpecialType == SpecialType.System_Void);
+
+        if (interceptorMethodReturnsObject != null)
+        {
+            generatedCode.AppendLine($"result = Intercept(result as Object) as {returnType};");
+        }
+        else if (interceptorMethodReturnsVoid != null)
+        {
+            generatedCode.AppendLine($"Intercept(result);");
+        }
+
+        generatedCode.AppendLine($"return result;");
+        generatedCode.AppendLine("}");
+        generatedCode.AppendLine();
     }
 
     private static void GenerateParameterResolution(string serviceProviderName, StringBuilder generatedCode, ImmutableArray<IParameterSymbol> parameters)
@@ -220,7 +277,6 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
             }
         }
     }
-
 
     private SemanticModel GetSemanticModel(Compilation compilation, SyntaxTree syntaxTree)
     {

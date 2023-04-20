@@ -84,7 +84,7 @@ public class Helper
         return false;
     }
 
-    private static bool HasFromServicesAttribute(IParameterSymbol parameterSymbol)
+    public static bool HasFromServicesAttribute(IParameterSymbol parameterSymbol)
     {
         return parameterSymbol.GetAttributes().Any(attr => attr.AttributeClass.Name.StartsWith("FromServices"));
     }
