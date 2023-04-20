@@ -3,7 +3,9 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 
+using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
@@ -31,9 +33,33 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
             return;
         }
 
+        var dic = _semanticModelCache;
+
+        var sw = Stopwatch.StartNew();
+
+        ExecuteInternal(context, receiver);
+        sw.Stop();
+
+        var diagnostic = Diagnostic.Create(
+            new DiagnosticDescriptor(
+                "ObjectFactorySourceGenerator",
+                "Source Generator Performance",
+                "ObjectFactorySourceGenerator took {0}ms to execute.",
+                "ObjectFactorySourceGenerator",
+                DiagnosticSeverity.Warning,
+                isEnabledByDefault: true),
+            Location.None,
+            sw.Elapsed.TotalMilliseconds);
+
+        context.ReportDiagnostic(diagnostic);
+    }
+
+    private void ExecuteInternal(GeneratorExecutionContext context, ObjectFactorySyntaxReceiver receiver)
+    {
         foreach (var factoryClass in receiver.FactoryClasses)
         {
-            var semanticModel = context.Compilation.GetSemanticModel(factoryClass.Declaration.SyntaxTree);
+            // var semanticModel = context.Compilation.GetSemanticModel(factoryClass.Declaration.SyntaxTree);
+            var semanticModel = GetSemanticModel(context.Compilation, factoryClass.Declaration.SyntaxTree);
             var factorySymbol = semanticModel.GetDeclaredSymbol(factoryClass.Declaration);
             var relayFactoryAttributes = factorySymbol.GetAttributes().Where(attr => attr.AttributeClass.Name.StartsWith("RelayFactoryOf"));
 
@@ -60,6 +86,7 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
             var serviceProviderName = serviceProviderFieldOrProperty.Name;
             var generatedCode = new StringBuilder();
             generatedCode.AppendLine("using System;");
+            generatedCode.AppendLine("using System.Collections.Generic;");
             generatedCode.AppendLine("using Microsoft.Extensions.DependencyInjection;");
             generatedCode.AppendLine();
 
@@ -82,8 +109,8 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
             // Generate the CreateXXX(...) methods
             foreach (ConstructorDeclarationSyntax constructor in receiver.CommandTypeConstructors)
             {
-                //List<TypeInfo> baseTypes = factoryClass.BaseTypes.Select(t => semanticModel.GetTypeInfo(t)).ToList();
-                IMethodSymbol constructorSymbol = semanticModel.GetDeclaredSymbol(constructor);
+                var constructorModel = GetSemanticModel(context.Compilation, constructor.SyntaxTree);
+                IMethodSymbol constructorSymbol = constructorModel.GetDeclaredSymbol(constructor);
                 INamedTypeSymbol containingTypeSymbol = constructorSymbol.ContainingType;
 
                 var inherits = InheritsFromBaseType(containingTypeSymbol, factoryClass.BaseTypes, semanticModel);
@@ -104,16 +131,13 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
                         generatedCode.AppendLine($"public {returnType} Create{returnType}({string.Join(", ", parameters.Select(p => $"{p.Type} {p.Name}"))})");
                         generatedCode.AppendLine("{");
 
-                        foreach (var fromServicesParameter in constructorSymbol.Parameters.Where(HasFromServicesAttribute))
-                        {
-                            generatedCode.AppendLine($"{fromServicesParameter.Type} {fromServicesParameter.Name} = {serviceProviderName}.GetRequiredService<{fromServicesParameter.Type}>();");
-                        }
+                        GenerateParameterResolution(serviceProviderName, generatedCode, constructorSymbol.Parameters);
 
-                        //generatedCode.AppendLine($"return new {returnType}({string.Join(", ", constructorSymbol.Parameters.Select(p => p.Name))});");
+                       
+
                         generatedCode.AppendLine($"var result = new {returnType}({string.Join(", ", constructorSymbol.Parameters.Select(p => p.Name))});");
 
                         var interceptorMethod = interceptorMethodSymbols.FirstOrDefault(m => m.ReturnType.Equals(containingTypeSymbol));
-                        //var interceptorMethod = interceptorMethodSymbols.FirstOrDefault(m => SymbolEqualityComparer.Default.Equals((ISymbol)m.ReturnType, (ISymbol)commandTypeBase));
                         if (interceptorMethod != null)
                         {
                             var interceptCall = $"Intercept(result)";
@@ -147,7 +171,54 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
             generatedCode.AppendLine("}");
 
             var fileName = $"{factoryClassName}_GeneratedFactoryMethods.generated.cs";
-            context.AddSource(fileName, SourceText.From(generatedCode.ToString(), Encoding.UTF8));
+            var stringCode = generatedCode.ToString();
+
+            context.AddSource(fileName, SourceText.From(stringCode, Encoding.UTF8));
+        }
+    }
+
+    private static void GenerateParameterResolution(string serviceProviderName, StringBuilder generatedCode, ImmutableArray<IParameterSymbol> parameters)
+    {
+        var parametersFromService = parameters
+            .Where(HasFromServicesAttribute)
+            .GroupBy(x => x.Type, SymbolEqualityComparer.Default);
+
+        foreach (var fromServicesParameters in parametersFromService)
+        {
+            var parameterType = fromServicesParameters.Key;
+            var parametersX = fromServicesParameters.ToList();
+            if (parametersX.Count <= 1)
+            {
+                var fromServicesParameter = parametersX[0];
+                generatedCode.AppendLine($"{fromServicesParameter.Type} {fromServicesParameter.Name} = {serviceProviderName}.GetRequiredService<{fromServicesParameter.Type}>();");
+            }
+            else
+            {
+                //parameterType.Name make first letter lowercase
+
+                var name = parameterType.Name.MakeFirstCharLowercase();
+
+                generatedCode.AppendLine($"var {name}Instances = {serviceProviderName}.GetRequiredService<IEnumerable<{parameterType.Name}>>();");
+                generatedCode.AppendLine($"using var {name}Enumerator = {name}Instances.GetEnumerator();");
+
+                bool first = true;
+                foreach (var fromServicesParameter in parametersX)
+                {
+                    generatedCode.AppendLine($"if (!{name}Enumerator.MoveNext())");
+                    generatedCode.AppendLine("{");
+                    if (!first)
+                    {
+                        generatedCode.AppendLine($"{name}Enumerator.Reset();");
+                    }
+                    else
+                    {
+                        generatedCode.AppendLine($"throw new InvalidOperationException(\"No service for type '{parameterType}' has been registered.\");");
+                    }
+                    generatedCode.AppendLine("}");
+                    generatedCode.AppendLine($"{fromServicesParameter.Type} {fromServicesParameter.Name} = {name}Enumerator.Current;");
+                    first = false;
+                }
+            }
         }
     }
 
@@ -163,7 +234,6 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
         }
         return false;
     }
-
 
     public static bool ConstructorInheritsFromBaseType(ConstructorDeclarationSyntax constructor, ClassDeclarationSyntax factoryClass, SemanticModel semanticModel)
     {
@@ -189,28 +259,28 @@ public class ObjectFactorySourceGenerator : ISourceGenerator
         return false;
     }
 
-
     private static bool HasFromServicesAttribute(IParameterSymbol parameterSymbol)
     {
         return parameterSymbol.GetAttributes().Any(attr => attr.AttributeClass.Name.StartsWith("FromServices"));
     }
+
+    private readonly Dictionary<SyntaxTree, SemanticModel> _semanticModelCache = new Dictionary<SyntaxTree, SemanticModel>();
+
+    private SemanticModel GetSemanticModel(Compilation compilation, SyntaxTree syntaxTree)
+    {
+        if (!_semanticModelCache.TryGetValue(syntaxTree, out var semanticModel))
+        {
+            semanticModel = compilation.GetSemanticModel(syntaxTree);
+            _semanticModelCache[syntaxTree] = semanticModel;
+        }
+
+        return semanticModel;
+    }
+
 }
 
 public static class Extensions
 {
-    //public static bool InheritsFrom(this INamedTypeSymbol type, INamedTypeSymbol baseType)
-    //{
-    //    if (type == null)
-    //    {
-    //        return false;
-    //    }
-    //    if (type.Equals(baseType))
-    //    {
-    //        return true;
-    //    }
-    //    return InheritsFrom(type.BaseType, baseType);
-    //}
-
     public static bool InheritsFrom(this INamedTypeSymbol derivedType, INamedTypeSymbol baseType)
     {
         if (derivedType == null || baseType == null)
@@ -231,6 +301,19 @@ public static class Extensions
         return derivedType.BaseType.InheritsFrom(baseType);
     }
 
+    public static string MakeFirstCharLowercase(this string str)
+    {
+        if (string.IsNullOrEmpty(str))
+        {
+            return str;
+        }
+        var strSpan = str.AsSpan();
+        var buffer = strSpan.Length <= 256 ? stackalloc char[strSpan.Length] : new char[strSpan.Length];
+        strSpan.CopyTo(buffer);
+        buffer[0] = char.ToLower(buffer[0]);
+        return buffer.ToString();
+    }
+
 }
 
 public class ObjectFactorySyntaxReceiver : ISyntaxReceiver
@@ -238,30 +321,10 @@ public class ObjectFactorySyntaxReceiver : ISyntaxReceiver
     internal List<FactoryInfo> FactoryClasses { get; } = new();
     public List<ConstructorDeclarationSyntax> CommandTypeConstructors { get; } = new();
 
-    //public List<Type> TypeList { get; } = new();
-
-    //public void OnVisitSyntaxNode(SyntaxNode syntaxNode)
-    //{
-    //    if (syntaxNode is ClassDeclarationSyntax classDeclaration &&
-    //        classDeclaration.Modifiers.Any(m => m.Text == "partial") &&
-    //        classDeclaration.AttributeLists.Any(a => a.Attributes.Any(attr => attr.Name.ToString().StartsWith("RelayFactoryOf"))))
-    //    {
-    //        FactoryClasses.Add(classDeclaration);
-    //    }
-
-    //    if (syntaxNode is ConstructorDeclarationSyntax constructorDeclaration &&
-    //        constructorDeclaration.Parent is ClassDeclarationSyntax parentClass &&
-    //        parentClass.BaseList != null)
-    //    {
-    //        CommandTypeConstructors.Add(constructorDeclaration);
-    //    }
-    //}
-
     public void OnVisitSyntaxNode(SyntaxNode syntaxNode)
     {
         if (syntaxNode is ClassDeclarationSyntax classDeclaration
             && classDeclaration.Modifiers.Any(m => m.Text == "partial")
-            //&& classDeclaration.AttributeLists.Any(a => a.Attributes.Any(attr => attr.Name.ToString().StartsWith("RelayFactoryOf")))
             )
         {
             VisitPartialDeclarations(classDeclaration);
@@ -290,8 +353,6 @@ public class ObjectFactorySyntaxReceiver : ISyntaxReceiver
         var factoryInfo = new FactoryInfo();
         factoryInfo.Declaration = classDeclaration;
 
-
-
         FactoryClasses.Add(factoryInfo);
         foreach (var factoryAttribute in factoryAttributes)
         {
@@ -299,14 +360,6 @@ public class ObjectFactorySyntaxReceiver : ISyntaxReceiver
             {
                 factoryInfo.BaseTypes.Add(typeOfExpression.Type);
             }
-
-            //var typeName = factoryAttribute.ArgumentList.Arguments.FirstOrDefault()?.ToString().Trim(' ', '"');
-            //var type = Type.GetType(typeName);
-            //if (type != null)
-            //{
-            //    //TypeList.Add(type);
-            //    factoryInfo.BaseTypes.Add(type);
-            //}
         }
     }
 }
