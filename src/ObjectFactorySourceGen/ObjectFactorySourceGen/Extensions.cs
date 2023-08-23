@@ -21,10 +21,17 @@ public static class Extensions
             return false;
         }
 
-        if (derivedType.BaseType.Equals(baseType))
+        if (derivedType.BaseType.Equals(baseType, SymbolEqualityComparer.Default))
         {
             return true;
         }
+
+        //compare by tostring
+        if (string.Equals(derivedType.BaseType.ToString(), baseType.ToString(), StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
 
         return derivedType.BaseType.InheritsFrom(baseType);
     }

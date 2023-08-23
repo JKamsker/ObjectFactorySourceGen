@@ -11,6 +11,15 @@ using System.Text;
 
 namespace ObjectFactorySourceGen;
 
+/// <summary>
+/// TODO:
+/// - Async Intialize
+/// - Maybe basefactory instead of partial
+/// -- Advantages:
+/// --- No need to add the partial keyword
+/// --- Intellisense hints for Hooks
+/// </summary>
+
 [Generator]
 public partial class ObjectFactorySourceGenerator : ISourceGenerator
 {
@@ -19,10 +28,7 @@ public partial class ObjectFactorySourceGenerator : ISourceGenerator
     public void Initialize(GeneratorInitializationContext context)
     {
 #if DEBUG
-        if (!Debugger.IsAttached)
-        {
-            Debugger.Launch();
-        }
+        LaunchDebugger();
 #endif
         context.RegisterForSyntaxNotifications(() => new ObjectFactorySyntaxReceiver());
     }
@@ -37,8 +43,27 @@ public partial class ObjectFactorySourceGenerator : ISourceGenerator
         var dic = _semanticModelCache;
 
         var sw = Stopwatch.StartNew();
+        try
+        {
+            ExecuteInternal(context, receiver);
+        }
+        catch (System.Exception ex)
+        {
+            var diag = Diagnostic.Create(
+                new DiagnosticDescriptor(
+                "ObjectFactorySourceGenerator",
+                "Source Generator Exception",
+                ex.ToString(),
+                "ObjectFactorySourceGenerator",
+                DiagnosticSeverity.Error,
+                isEnabledByDefault: true),
+                Location.None);
 
-        ExecuteInternal(context, receiver);
+            context.ReportDiagnostic(diag);
+
+            //LaunchDebugger();
+        }
+
         sw.Stop();
 
         var diagnostic = Diagnostic.Create(
@@ -57,6 +82,10 @@ public partial class ObjectFactorySourceGenerator : ISourceGenerator
 
     private void ExecuteInternal(GeneratorExecutionContext context, ObjectFactorySyntaxReceiver receiver)
     {
+        if (!receiver.FactoryClasses.Any())
+        {
+            //LaunchDebugger();
+        }
         foreach (var factoryClass in receiver.FactoryClasses)
         {
             var semanticModel = GetSemanticModel(context.Compilation, factoryClass.Declaration.SyntaxTree);
@@ -71,17 +100,75 @@ public partial class ObjectFactorySourceGenerator : ISourceGenerator
 
             var serviceProviderName = serviceProviderFieldOrProperty.Name;
             var generatedCode = GenerateFactoryCode(context, receiver, factoryClass, factorySymbol, serviceProviderName);
+
             var fileName = $"{factorySymbol.Name}_GeneratedFactoryMethods.generated.cs";
 
-            context.AddSource(fileName, SourceText.From(generatedCode, Encoding.UTF8));
+            if (!string.IsNullOrEmpty(generatedCode))
+            {
+                if (!generatedCode.Contains("CreateCommandType"))
+                {
+                    //LaunchDebugger();
+                    var diagnostic = Diagnostic.Create(
+                        new DiagnosticDescriptor(
+                            "ObjectFactorySourceGenerator",
+                            "No Factory  methods",
+                            "No factory methods generated",
+                            "ObjectFactorySourceGenerator",
+                            DiagnosticSeverity.Error,
+                            isEnabledByDefault: true),
+                        factorySymbol.Locations[0]);
+
+                    context.ReportDiagnostic(diagnostic);
+                    //throw new System.Exception("No Factory  methods");
+                    //LaunchDebugger();
+                    continue;
+                }
+
+                context.AddSource(fileName, SourceText.From(generatedCode, Encoding.UTF8));
+            }
+            else
+            {
+                Debugger.Break();
+            }
+
+            //var outputDir = @"C:\Users\W31rd0\source\repos\Random\ObjectFactorySourceGen\output";
+            //if (Directory.Exists(outputDir))
+            //{
+            //    var path = Path.Combine(outputDir, fileName);
+            //    File.WriteAllText(path, generatedCode);
+            //    var number = 1;
+
+            //    var current = path + "." + number;
+            //    while (File.Exists(current))
+            //    {
+            //        number++;
+            //        current = path + "." + number;
+            //    }
+            //    File.WriteAllText(current, generatedCode);
+            //}
+        }
+    }
+
+    [DebuggerStepThrough]
+    private static void LaunchDebugger()
+    {
+        if (!Debugger.IsAttached)
+        {
+            Debugger.Launch();
+        }
+        else
+        {
+            Debugger.Break();
         }
     }
 
     private IFieldSymbol FindServiceProviderFieldOrProperty(GeneratorExecutionContext context, INamedTypeSymbol factorySymbol)
     {
         var serviceProviderSymbol = context.Compilation.GetTypeByMetadataName("System.IServiceProvider");
-        return factorySymbol.GetMembers()
-            .FirstOrDefault(m => m.Kind == SymbolKind.Field || m.Kind == SymbolKind.Property && (m as ITypeSymbol).Equals(serviceProviderSymbol)) as IFieldSymbol;
+        return factorySymbol.GetMembers().FirstOrDefault(m =>
+            m.Kind == SymbolKind.Field
+            || m.Kind == SymbolKind.Property && ((m as ITypeSymbol)?.Equals(serviceProviderSymbol, SymbolEqualityComparer.Default) ?? false)
+        ) as IFieldSymbol;
     }
 
     private void ReportNoServiceProviderDiagnostic(GeneratorExecutionContext context, INamedTypeSymbol factorySymbol)
@@ -108,7 +195,11 @@ public partial class ObjectFactorySourceGenerator : ISourceGenerator
         AppendNamespaceDeclaration(generatedCode, factorySymbol.ContainingNamespace);
 
         AppendPartialClassDeclaration(generatedCode, factorySymbol.Name);
-        AppendCreateMethods(context, receiver, factoryClass, factorySymbol, serviceProviderName, generatedCode);
+        var hasCreated = AppendCreateMethods(context, receiver, factoryClass, factorySymbol, serviceProviderName, generatedCode);
+        if (!hasCreated)
+        {
+            return string.Empty;
+        }
 
         generatedCode.AppendLine("}");
         generatedCode.AppendLine("}");
@@ -136,8 +227,9 @@ public partial class ObjectFactorySourceGenerator : ISourceGenerator
         generatedCode.AppendLine("{");
     }
 
-    private void AppendCreateMethods(GeneratorExecutionContext context, ObjectFactorySyntaxReceiver receiver, FactoryInfo factoryClass, INamedTypeSymbol factorySymbol, string serviceProviderName, StringBuilder generatedCode)
+    private bool AppendCreateMethods(GeneratorExecutionContext context, ObjectFactorySyntaxReceiver receiver, FactoryInfo factoryClass, INamedTypeSymbol factorySymbol, string serviceProviderName, StringBuilder generatedCode)
     {
+        var hasCreateMethods = false;
         var interceptorMethodSymbols = GetInterceptorMethods(factorySymbol);
 
         foreach (ConstructorDeclarationSyntax constructor in receiver.CommandTypeConstructors)
@@ -155,13 +247,59 @@ public partial class ObjectFactorySourceGenerator : ISourceGenerator
 
             foreach (var relayFactoryAttribute in GetRelayFactoryAttributes(factorySymbol))
             {
-                var commandTypeBase = relayFactoryAttribute.ConstructorArguments[0].Value;
-                if (commandTypeBase.Equals(containingTypeSymbol.BaseType))
+                var constructorArguments = relayFactoryAttribute.ConstructorArguments;
+                if (constructorArguments.Length < 1)
+                {
+                    // diagnostic
+                    var diagnostic = Diagnostic.Create(
+                        new DiagnosticDescriptor(
+                            "ObjectFactorySourceGenerator",
+                            "RelayFactoryOf attribute has no constructor arguments",
+                            "The {0} class must contain an IServiceProvider field or property.",
+                            "ObjectFactorySourceGenerator",
+                            DiagnosticSeverity.Error,
+                            isEnabledByDefault: true),
+                        factorySymbol.Locations[0],
+                        factorySymbol.Name);
+
+                    context.ReportDiagnostic(diagnostic);
+                    //
+                    continue;
+                }
+
+                Debugger.Break();
+                var commandTypeBase = relayFactoryAttribute.ConstructorArguments[0].Value as INamedTypeSymbol;
+                if (commandTypeBase == null)
+                {
+                    // diagnostic
+                    var diagnostic = Diagnostic.Create(
+                                               new DiagnosticDescriptor(
+                                                "ObjectFactorySourceGenerator",
+                                                "RelayFactoryOf attribute has no constructor arguments",
+                                                "The {0} class must contain an IServiceProvider field or property.",
+                                                "ObjectFactorySourceGenerator",
+                                                DiagnosticSeverity.Error,
+                                                isEnabledByDefault: true),
+                                                factorySymbol.Locations[0],
+                                        factorySymbol.Name);
+
+                    context.ReportDiagnostic(diagnostic);
+                    //
+                    continue;
+                }
+
+                var baseTypesEqual = commandTypeBase.Equals(containingTypeSymbol.BaseType, SymbolEqualityComparer.Default)
+                    || string.Equals(commandTypeBase.ToString(), containingTypeSymbol.BaseType.ToString(), System.StringComparison.OrdinalIgnoreCase);
+
+                if (baseTypesEqual)
                 {
                     AppendCreateMethod(generatedCode, containingTypeSymbol, constructorSymbol, serviceProviderName, interceptorMethodSymbols);
+                    hasCreateMethods = true;
                 }
             }
         }
+
+        return hasCreateMethods;
     }
 
     public bool InheritsFromBaseType(INamedTypeSymbol containingTypeSymbol, IEnumerable<TypeSyntax> baseTypes, Compilation compilation)
@@ -202,7 +340,7 @@ public partial class ObjectFactorySourceGenerator : ISourceGenerator
 
         generatedCode.AppendLine($"var result = new {returnType}({string.Join(", ", constructorSymbol.Parameters.Select(p => p.Name))});");
 
-        var interceptorMethod = interceptorMethodSymbols.FirstOrDefault(m => m.ReturnType.Equals(containingTypeSymbol));
+        var interceptorMethod = interceptorMethodSymbols.FirstOrDefault(m => m.ReturnType.Equals(containingTypeSymbol, SymbolEqualityComparer.Default));
         if (interceptorMethod != null)
         {
             var interceptCall = $"Intercept(result)";
@@ -265,6 +403,7 @@ public partial class ObjectFactorySourceGenerator : ISourceGenerator
                     if (!first)
                     {
                         generatedCode.AppendLine($"{name}Enumerator.Reset();");
+                        generatedCode.AppendLine($"{name}Enumerator.MoveNext();");
                     }
                     else
                     {

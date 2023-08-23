@@ -3,11 +3,18 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.5.33424.131
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ObjectFactorySourceGen", "ObjectFactorySourceGen\ObjectFactorySourceGen.csproj", "{A305DA7A-60A0-41FC-AB8F-11F0BCA03099}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ObjectFactorySourceGen", "ObjectFactorySourceGen\ObjectFactorySourceGen.csproj", "{A305DA7A-60A0-41FC-AB8F-11F0BCA03099}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ObjectFactorySourceGen.Tests", "..\..\tests\ObjectFactorySourceGen.Tests\ObjectFactorySourceGen.Tests.csproj", "{EF3D9E50-1E33-475A-B2FC-DC8C40E0E959}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ObjectFactorySourceGen.Tests", "..\..\tests\ObjectFactorySourceGen.Tests\ObjectFactorySourceGen.Tests.csproj", "{EF3D9E50-1E33-475A-B2FC-DC8C40E0E959}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ObjectFactorySourceGen.ConsoleTest", "..\..\tests\ObjectFactorySourceGen.ConsoleTest\ObjectFactorySourceGen.ConsoleTest.csproj", "{593389D8-CEE5-4AE1-86CE-9E9CEAAFF22D}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ObjectFactorySourceGen.ConsoleTest", "..\..\tests\ObjectFactorySourceGen.ConsoleTest\ObjectFactorySourceGen.ConsoleTest.csproj", "{593389D8-CEE5-4AE1-86CE-9E9CEAAFF22D}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{2A428E4A-DBAB-48D3-BE03-9922B4BA116F}"
+	ProjectSection(SolutionItems) = preProject
+		..\..\tests\ObjectFactorySourceGen.ConsoleTest\obj\Debug\net7.0\generated\ObjectFactorySourceGen\ObjectFactorySourceGen.ObjectFactorySourceGenerator\MyFactory_GeneratedFactoryMethods.generated.cs = ..\..\tests\ObjectFactorySourceGen.ConsoleTest\obj\Debug\net7.0\generated\ObjectFactorySourceGen\ObjectFactorySourceGen.ObjectFactorySourceGenerator\MyFactory_GeneratedFactoryMethods.generated.cs
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ObjectFactorySourceGen.Common", "ObjectFactorySourceGen.Common\ObjectFactorySourceGen.Common.csproj", "{7DD1F930-0A8E-4050-AC5A-AAA90EA2D134}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -27,6 +34,10 @@ Global
 		{593389D8-CEE5-4AE1-86CE-9E9CEAAFF22D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{593389D8-CEE5-4AE1-86CE-9E9CEAAFF22D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{593389D8-CEE5-4AE1-86CE-9E9CEAAFF22D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7DD1F930-0A8E-4050-AC5A-AAA90EA2D134}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7DD1F930-0A8E-4050-AC5A-AAA90EA2D134}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7DD1F930-0A8E-4050-AC5A-AAA90EA2D134}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7DD1F930-0A8E-4050-AC5A-AAA90EA2D134}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

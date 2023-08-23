@@ -1,17 +1,38 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
 	<OutputType>Exe</OutputType>
 	<TargetFramework>net7.0</TargetFramework>
 	<ImplicitUsings>enable</ImplicitUsings>
 	<Nullable>enable</Nullable>
+	  
+	<!--<EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+	<CompilerGeneratedFilesOutputPath>Generated</CompilerGeneratedFilesOutputPath>-->
   </PropertyGroup>
 	<ItemGroup>
 		<PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="7.0.0" />
+		<!--<PackageReference Include="ObjectFactorySourceGen" Version="1.0.0" OutputItemType="Analyzer" ReferenceOutputAssembly="true" />-->
 	</ItemGroup>
 	<ItemGroup>
+	  <ProjectReference Include="..\..\src\ObjectFactorySourceGen\ObjectFactorySourceGen.Common\ObjectFactorySourceGen.Common.csproj" />
 	  <ProjectReference Include="..\..\src\ObjectFactorySourceGen\ObjectFactorySourceGen\ObjectFactorySourceGen.csproj" 
 						OutputItemType="Analyzer"
-						ReferenceOutputAssembly="true" />
+						ReferenceOutputAssembly="false" />
 	</ItemGroup>
+
+	<!--<PropertyGroup>
+		<EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+		<CompilerGeneratedFilesOutputPath>Generated</CompilerGeneratedFilesOutputPath>
+	</PropertyGroup>
+	<Target Name="AddSourceGeneratedFiles" AfterTargets="CoreCompile">
+		<ItemGroup>
+			<Compile Include="Generated\**" />
+		
+		</ItemGroup>
+	</Target>
+	<Target Name="RemoveSourceGeneratedFiles" BeforeTargets="CoreCompile">
+		<ItemGroup>
+			<Compile Remove="Generated\**" />
+		</ItemGroup>
+	</Target>-->
 </Project>

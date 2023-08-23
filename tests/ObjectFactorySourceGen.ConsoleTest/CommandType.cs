@@ -18,8 +18,20 @@ public class CommandType : CommandTypeBase
         // do something
     }
 
-    public CommandType(string myParameter, int myParameter1, [FromServices] MyService context)
+    public CommandType(string abvcdxx, int a, int x)
     {
-        // do something
+        
     }
+
+    // Uncomment that and nothing works anymore:
+    //public CommandType(string myParameter, string myParameter1, int myParametex, [FromServices] MyService1 context0, [FromServices] MyService context, [FromServices] MyService context1)
+    //{
+    //    Context0 = context0;
+    //    Context = context;
+    //    Context1 = context1;
+    //    // do something
+    //}
+
+
+
 }

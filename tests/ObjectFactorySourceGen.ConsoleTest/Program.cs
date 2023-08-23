@@ -24,21 +24,15 @@ internal class Program
 
         ct4.GetEnumerator();
 
-
         var ct = sp.GetService<CommandType>();
 
         var factory = new MyFactory(sp);
         var ctype = factory.CreateCommandType("", "", "");
-
-
-
+        var ctypex = factory.CreateCommandType("", 1, 5);
 
         //var commandType = factory.CreateCommandType("", 1);
     }
 }
-
-
-
 
 [RelayFactoryOf(typeof(CommandTypeBase))]
 public partial class MyFactory
@@ -63,6 +57,8 @@ public partial class MyFactory
         return commandType1;
     }
 
+    //Todo: Add Support for async Initialize
+
     //public CommandType CreateCommandType
     //(
     //    string myParameter,
@@ -86,7 +82,6 @@ public partial class MyFactory
 
     //    var context1 = enumeration.Current;
 
-
     //    var result = new CommandType(
     //        myParameter,
     //        myParameter1,
@@ -98,9 +93,43 @@ public partial class MyFactory
     //    result = Intercept(result);
     //    return result;
     //}
-
-
 }
+
+//public class MyFactoryBase
+//{
+//    private readonly IServiceProvider _provider;
+
+//    public MyFactoryBase(IServiceProvider provider)
+//    {
+//        _provider = provider;
+//    }
+
+//    //public virtual void Intercept(CommandType commandType1)
+//    //{
+//    //}
+
+//    //public virtual void Intercept(object item)
+//    //{
+//    //}
+
+//    public virtual CommandType Intercept(CommandType commandType1)
+//    {
+//        return commandType1;
+//    }
+
+//    public virtual object Intercept(object item)
+//    {
+//        return item;
+//    }
+
+//    public CommandType CreateCommandType(string myParameter, int myParameter1)
+//    {
+//        ObjectFactorySourceGen.ConsoleTest.MyService context = _provider.GetRequiredService<ObjectFactorySourceGen.ConsoleTest.MyService>();
+//        var result = new CommandType(myParameter, myParameter1, context);
+//        result = Intercept(result);
+//        return result;
+//    }
+//}
 
 public class ShouldNotBeGenerated : NoBase
 {
@@ -121,14 +150,14 @@ public class NoBase
 
 public class MyService1
 {
-
 }
+
 public class MyService
 {
     public int Number { get; set; }
+
     public MyService(int number)
     {
         Number = number;
     }
 }
-
