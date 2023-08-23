@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 
 namespace ObjectFactorySourceGen;
@@ -25,10 +26,12 @@ public static class Extensions
         {
             return true;
         }
+        
 
         //compare by tostring
         if (string.Equals(derivedType.BaseType.ToString(), baseType.ToString(), StringComparison.OrdinalIgnoreCase))
         {
+            Debugger.Break();
             return true;
         }
 

@@ -40,6 +40,7 @@ public partial class ObjectFactorySourceGenerator : ISourceGenerator
             return;
         }
 
+
         var dic = _semanticModelCache;
 
         var sw = Stopwatch.StartNew();
@@ -82,6 +83,8 @@ public partial class ObjectFactorySourceGenerator : ISourceGenerator
 
     private void ExecuteInternal(GeneratorExecutionContext context, ObjectFactorySyntaxReceiver receiver)
     {
+
+        var diag = context.Compilation.GetDiagnostics();
         if (!receiver.FactoryClasses.Any())
         {
             //LaunchDebugger();
@@ -128,6 +131,7 @@ public partial class ObjectFactorySourceGenerator : ISourceGenerator
             }
             else
             {
+
                 Debugger.Break();
             }
 
@@ -267,7 +271,7 @@ public partial class ObjectFactorySourceGenerator : ISourceGenerator
                     continue;
                 }
 
-                Debugger.Break();
+                // Debugger.Break();
                 var commandTypeBase = relayFactoryAttribute.ConstructorArguments[0].Value as INamedTypeSymbol;
                 if (commandTypeBase == null)
                 {
@@ -419,12 +423,13 @@ public partial class ObjectFactorySourceGenerator : ISourceGenerator
 
     private SemanticModel GetSemanticModel(Compilation compilation, SyntaxTree syntaxTree)
     {
-        if (!_semanticModelCache.TryGetValue(syntaxTree, out var semanticModel))
-        {
-            semanticModel = compilation.GetSemanticModel(syntaxTree);
-            _semanticModelCache[syntaxTree] = semanticModel;
-        }
+        return compilation.GetSemanticModel(syntaxTree);
+        // if (!_semanticModelCache.TryGetValue(syntaxTree, out var semanticModel))
+        // {
+        //     semanticModel = compilation.GetSemanticModel(syntaxTree);
+        //     _semanticModelCache[syntaxTree] = semanticModel;
+        // }
 
-        return semanticModel;
+        // return semanticModel;
     }
 }
